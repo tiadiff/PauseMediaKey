@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -7,19 +7,37 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
     
-    <!-- Assembly Metadata -->
     <AssemblyTitle>PauseMediaKey</AssemblyTitle>
     <Product>PauseMediaKey</Product>
-    <Description>Minimalist dark-themed Windows utility to remap the Pause/Break key into a global Media Play/Pause control for Opera GX, Spotify, YouTube and Windows audio.</Description>
+    <Description>Minimalist dark-themed Windows management utility for PauseMediaService.</Description>
     <Company>tiadiff</Company>
     <Copyright>Copyright © 2026 tiadiff</Copyright>
-    <Version>1.0.0</Version>
-    <AssemblyVersion>1.0.0.0</AssemblyVersion>
-    <FileVersion>1.0.0.0</FileVersion>
-    
-    <!-- Publishing & Release Settings -->
+    <Version>1.0.1</Version>
+    <AssemblyVersion>1.0.1.0</AssemblyVersion>
+    <FileVersion>1.0.1.0</FileVersion>
     <DebugType>none</DebugType>
     <DebugSymbols>false</DebugSymbols>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Exclude the sub-project files from default compilation -->
+    <Compile Remove="PauseMediaService\**" />
+    <Compile Include="PauseMediaService\ServiceConfig.cs" Link="ServiceConfig.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="PauseMediaService\PauseMediaService.csproj">
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <OutputItemType>Content</OutputItemType>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </ProjectReference>
+  </ItemGroup>
+
+  <Target Name="CopyServiceOutputs" AfterTargets="Build">
+    <ItemGroup>
+      <ServiceFiles Include="PauseMediaService\bin\$(Configuration)\$(TargetFramework)\*.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(ServiceFiles)" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" />
+  </Target>
 
 </Project>

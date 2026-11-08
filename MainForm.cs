@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.IO;
@@ -9,19 +10,19 @@ namespace PauseMediaKey
 {
     public class MainForm : Form
     {
-        private readonly KeyboardHook _hook;
-        private readonly NotifyIcon _notifyIcon;
-        private readonly ContextMenuStrip _trayMenu;
+        private ServiceConfig _config;
+        private readonly System.Windows.Forms.Timer _pollTimer;
 
         private Panel _cardPanel = null!;
         private Label _titleLabel = null!;
         private Label _subtitleLabel = null!;
         private Label _statusBadge = null!;
         private Label _statusDesc = null!;
+        private Label _serviceProcessLabel = null!;
         private Label _lastTriggerLabel = null!;
         private Button _toggleButton = null!;
-        private CheckBox _chkMinimizeToTray = null!;
         private CheckBox _chkStartWithWindows = null!;
+        private Button _restartServiceBtn = null!;
         private Label _footerTip = null!;
 
         [DllImport("dwmapi.dll")]
@@ -30,20 +31,17 @@ namespace PauseMediaKey
 
         public MainForm()
         {
-            _hook = new KeyboardHook();
-            _notifyIcon = new NotifyIcon();
-            _trayMenu = new ContextMenuStrip();
+            _config = ServiceConfig.Load();
+            _pollTimer = new System.Windows.Forms.Timer { Interval = 1000 };
+            _pollTimer.Tick += (s, e) => PollServiceStatus();
 
             InitializeComponent();
             ApplyTheme();
-            SetupTray();
 
-            _hook.MediaKeyTriggered += OnMediaKeyTriggered;
-            _hook.StatusChanged += OnHookStatusChanged;
-
-            // Start hook by default
-            _hook.Start();
+            EnsureServiceRunning();
             UpdateUI();
+
+            _pollTimer.Start();
         }
 
         protected override void OnHandleCreated(EventArgs e)
@@ -63,9 +61,10 @@ namespace PauseMediaKey
         private void InitializeComponent()
         {
             Text = "PauseMediaKey";
-            ClientSize = new Size(460, 360);
+            ClientSize = new Size(470, 360);
             FormBorderStyle = FormBorderStyle.FixedSingle;
             MaximizeBox = false;
+            MinimizeBox = true;
             StartPosition = FormStartPosition.CenterScreen;
             BackColor = Color.FromArgb(24, 25, 28);
             ForeColor = Color.FromArgb(240, 242, 245);
@@ -77,24 +76,24 @@ namespace PauseMediaKey
                 Text = "PauseMediaKey",
                 Font = new Font("Segoe UI", 14f, FontStyle.Bold, GraphicsUnit.Point),
                 ForeColor = Color.FromArgb(245, 246, 248),
-                Location = new Point(24, 20),
+                Location = new Point(24, 18),
                 AutoSize = true
             };
 
             _subtitleLabel = new Label
             {
-                Text = "Remap 'Pause / Interr' to Windows Play/Pause Media Control",
+                Text = "Independent Background Service Controller",
                 Font = new Font("Segoe UI", 8.5f, FontStyle.Regular, GraphicsUnit.Point),
                 ForeColor = Color.FromArgb(145, 152, 161),
-                Location = new Point(25, 48),
+                Location = new Point(25, 46),
                 AutoSize = true
             };
 
             // Status Card Panel
             _cardPanel = new Panel
             {
-                Location = new Point(24, 80),
-                Size = new Size(412, 110),
+                Location = new Point(24, 76),
+                Size = new Size(422, 122),
                 BackColor = Color.FromArgb(34, 37, 41)
             };
             _cardPanel.Paint += (s, e) =>
@@ -106,86 +105,103 @@ namespace PauseMediaKey
                 e.Graphics.DrawRectangle(pen, rect);
 
                 // Draw status indicator circle
-                var dotColor = _hook.IsActive ? Color.FromArgb(46, 160, 67) : Color.FromArgb(120, 126, 134);
+                var dotColor = _config.IsEnabled ? Color.FromArgb(46, 160, 67) : Color.FromArgb(120, 126, 134);
                 using var dotBrush = new SolidBrush(dotColor);
                 e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-                e.Graphics.FillEllipse(dotBrush, 18, 20, 10, 10);
+                e.Graphics.FillEllipse(dotBrush, 18, 19, 10, 10);
             };
 
             _statusBadge = new Label
             {
-                Location = new Point(36, 16),
+                Location = new Point(36, 15),
                 AutoSize = true,
                 Font = new Font("Segoe UI", 10.5f, FontStyle.Bold, GraphicsUnit.Point)
             };
 
             _statusDesc = new Label
             {
-                Location = new Point(18, 44),
-                Size = new Size(376, 36),
+                Location = new Point(18, 42),
+                Size = new Size(386, 34),
                 Font = new Font("Segoe UI", 8.8f, FontStyle.Regular, GraphicsUnit.Point),
                 ForeColor = Color.FromArgb(170, 175, 183)
             };
 
+            _serviceProcessLabel = new Label
+            {
+                Location = new Point(18, 78),
+                Size = new Size(386, 18),
+                Font = new Font("Segoe UI", 8f, FontStyle.Regular, GraphicsUnit.Point),
+                ForeColor = Color.FromArgb(135, 142, 151),
+                Text = "Service: Initializing..."
+            };
+
             _lastTriggerLabel = new Label
             {
-                Location = new Point(18, 84),
-                Size = new Size(376, 20),
+                Location = new Point(18, 98),
+                Size = new Size(386, 18),
                 Font = new Font("Segoe UI", 8f, FontStyle.Regular, GraphicsUnit.Point),
-                ForeColor = Color.FromArgb(125, 132, 142),
+                ForeColor = Color.FromArgb(120, 126, 134),
                 Text = "Ready - Waiting for keypress"
             };
 
             _cardPanel.Controls.Add(_statusBadge);
             _cardPanel.Controls.Add(_statusDesc);
+            _cardPanel.Controls.Add(_serviceProcessLabel);
             _cardPanel.Controls.Add(_lastTriggerLabel);
 
             // Toggle Button
             _toggleButton = new Button
             {
-                Location = new Point(24, 204),
-                Size = new Size(412, 44),
+                Location = new Point(24, 210),
+                Size = new Size(422, 44),
                 FlatStyle = FlatStyle.Flat,
                 Font = new Font("Segoe UI", 10f, FontStyle.Bold, GraphicsUnit.Point),
                 Cursor = Cursors.Hand
             };
             _toggleButton.FlatAppearance.BorderSize = 0;
-            _toggleButton.Click += (s, e) => _hook.Toggle();
-
-            // Checkbox: Minimize to Tray
-            _chkMinimizeToTray = new CheckBox
-            {
-                Text = "Close / minimize to system tray",
-                Location = new Point(26, 260),
-                AutoSize = true,
-                Checked = true,
-                ForeColor = Color.FromArgb(200, 205, 212),
-                Font = new Font("Segoe UI", 8.8f, FontStyle.Regular, GraphicsUnit.Point)
-            };
+            _toggleButton.Click += (s, e) => ToggleState();
 
             // Checkbox: Start with Windows
             _chkStartWithWindows = new CheckBox
             {
-                Text = "Start automatically with Windows",
-                Location = new Point(26, 286),
+                Text = "Start background service with Windows",
+                Location = new Point(26, 266),
                 AutoSize = true,
-                Checked = IsStartupShortcutEnabled(),
+                Checked = _config.Autostart,
                 ForeColor = Color.FromArgb(200, 205, 212),
                 Font = new Font("Segoe UI", 8.8f, FontStyle.Regular, GraphicsUnit.Point)
             };
             _chkStartWithWindows.CheckedChanged += (s, e) =>
             {
-                SetStartupShortcut(_chkStartWithWindows.Checked);
+                _config.Autostart = _chkStartWithWindows.Checked;
+                _config.Save();
+                ServiceConfig.NotifyService();
             };
+
+            // Restart Service Button
+            _restartServiceBtn = new Button
+            {
+                Text = "Restart Service",
+                Location = new Point(326, 262),
+                Size = new Size(120, 28),
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI", 8.2f, FontStyle.Regular, GraphicsUnit.Point),
+                BackColor = Color.FromArgb(42, 45, 50),
+                ForeColor = Color.FromArgb(180, 186, 194),
+                Cursor = Cursors.Hand
+            };
+            _restartServiceBtn.FlatAppearance.BorderSize = 1;
+            _restartServiceBtn.FlatAppearance.BorderColor = Color.FromArgb(58, 62, 69);
+            _restartServiceBtn.Click += (s, e) => RestartService();
 
             // Footer tip
             _footerTip = new Label
             {
-                Text = "Works with Opera GX, Spotify, Chrome, YouTube & Windows Media.",
-                Location = new Point(24, 324),
-                Size = new Size(412, 20),
-                ForeColor = Color.FromArgb(115, 122, 131),
-                Font = new Font("Segoe UI", 7.8f, FontStyle.Regular, GraphicsUnit.Point),
+                Text = "You can close this window anytime. The service continues running independently.",
+                Location = new Point(24, 312),
+                Size = new Size(422, 32),
+                ForeColor = Color.FromArgb(120, 127, 137),
+                Font = new Font("Segoe UI", 8f, FontStyle.Regular, GraphicsUnit.Point),
                 TextAlign = ContentAlignment.MiddleCenter
             };
 
@@ -193,8 +209,8 @@ namespace PauseMediaKey
             Controls.Add(_subtitleLabel);
             Controls.Add(_cardPanel);
             Controls.Add(_toggleButton);
-            Controls.Add(_chkMinimizeToTray);
             Controls.Add(_chkStartWithWindows);
+            Controls.Add(_restartServiceBtn);
             Controls.Add(_footerTip);
         }
 
@@ -203,52 +219,32 @@ namespace PauseMediaKey
             UpdateAppIcon();
         }
 
-        private void SetupTray()
-        {
-            _trayMenu.Renderer = new DarkMenuRenderer();
-            _trayMenu.Items.Add("Open PauseMediaKey", null, (s, e) => RestoreFromTray());
-            _trayMenu.Items.Add("Toggle (Active / Inactive)", null, (s, e) => _hook.Toggle());
-            _trayMenu.Items.Add(new ToolStripSeparator());
-            _trayMenu.Items.Add("Exit", null, (s, e) => ExitApplication());
-
-            _notifyIcon.ContextMenuStrip = _trayMenu;
-            _notifyIcon.Text = "PauseMediaKey";
-            _notifyIcon.Visible = true;
-            _notifyIcon.DoubleClick += (s, e) => RestoreFromTray();
-        }
-
         private void UpdateAppIcon()
         {
-            bool active = _hook != null && _hook.IsActive;
+            bool active = _config.IsEnabled;
             using var bmp = new Bitmap(32, 32);
             using (var g = Graphics.FromImage(bmp))
             {
                 g.SmoothingMode = SmoothingMode.AntiAlias;
 
-                // Rounded background
                 using var bgBrush = new SolidBrush(Color.FromArgb(34, 37, 41));
                 g.FillRectangle(bgBrush, 0, 0, 32, 32);
 
-                // Play / Pause symbol
                 var color = active ? Color.FromArgb(46, 160, 67) : Color.FromArgb(135, 142, 151);
                 using var symbolBrush = new SolidBrush(color);
 
-                // Draw two vertical pause bars
                 g.FillRectangle(symbolBrush, 7, 7, 6, 18);
                 g.FillRectangle(symbolBrush, 19, 7, 6, 18);
             }
 
-            var iconHandle = bmp.GetHicon();
-            var icon = Icon.FromHandle(iconHandle);
-            Icon = icon;
-            _notifyIcon.Icon = icon;
+            Icon = Icon.FromHandle(bmp.GetHicon());
         }
 
         private void UpdateUI()
         {
-            bool active = _hook.IsActive;
+            bool active = _config.IsEnabled;
 
-            _statusBadge.Text = active ? "ACTIVE" : "INACTIVE";
+            _statusBadge.Text = active ? "SERVICE: ACTIVE" : "SERVICE: INACTIVE";
             _statusBadge.ForeColor = active ? Color.FromArgb(46, 160, 67) : Color.FromArgb(145, 152, 161);
 
             _statusDesc.Text = active
@@ -270,154 +266,98 @@ namespace PauseMediaKey
                 _toggleButton.FlatAppearance.MouseOverBackColor = Color.FromArgb(56, 178, 77);
             }
 
+            if (_config.LastTriggered.HasValue)
+            {
+                _lastTriggerLabel.Text = $"Last event: Play/Pause sent at {_config.LastTriggered.Value:HH:mm:ss}";
+            }
+
             _cardPanel.Invalidate();
             UpdateAppIcon();
-
-            _notifyIcon.Text = active ? "PauseMediaKey (Active)" : "PauseMediaKey (Inactive)";
         }
 
-        private void OnHookStatusChanged(bool active)
+        private void ToggleState()
         {
-            if (InvokeRequired)
-            {
-                BeginInvoke(new Action(() => OnHookStatusChanged(active)));
-                return;
-            }
+            _config.IsEnabled = !_config.IsEnabled;
+            _config.Save();
+            ServiceConfig.NotifyService();
             UpdateUI();
         }
 
-        private void OnMediaKeyTriggered()
+        private void PollServiceStatus()
         {
-            if (InvokeRequired)
+            var processes = Process.GetProcessesByName("PauseMediaService");
+            if (processes.Length > 0)
             {
-                BeginInvoke(new Action(OnMediaKeyTriggered));
-                return;
+                var p = processes[0];
+                _serviceProcessLabel.Text = $"Background Service: Running (PID: {p.Id})";
+                _serviceProcessLabel.ForeColor = Color.FromArgb(135, 142, 151);
+            }
+            else
+            {
+                _serviceProcessLabel.Text = "Background Service: Stopped (Click Restart Service to launch)";
+                _serviceProcessLabel.ForeColor = Color.FromArgb(220, 130, 60);
             }
 
-            _lastTriggerLabel.Text = $"Last triggered: Play/Pause sent at {DateTime.Now:HH:mm:ss}";
-            _lastTriggerLabel.ForeColor = Color.FromArgb(46, 160, 67);
-
-            // Reset color after 1.5 seconds
-            var timer = new System.Windows.Forms.Timer { Interval = 1500 };
-            timer.Tick += (s, e) =>
+            // Sync last triggered timestamp from disk
+            var diskConfig = ServiceConfig.Load();
+            if (diskConfig.LastTriggered != _config.LastTriggered)
             {
-                _lastTriggerLabel.ForeColor = Color.FromArgb(125, 132, 142);
-                timer.Stop();
-                timer.Dispose();
-            };
-            timer.Start();
-        }
-
-        protected override void OnFormClosing(FormClosingEventArgs e)
-        {
-            if (e.CloseReason == CloseReason.UserClosing && _chkMinimizeToTray.Checked)
-            {
-                e.Cancel = true;
-                Hide();
-                _notifyIcon.ShowBalloonTip(1500, "PauseMediaKey", "Minimized to tray. Double-click icon to open.", ToolTipIcon.Info);
-                return;
-            }
-
-            _hook.Dispose();
-            _notifyIcon.Visible = false;
-            _notifyIcon.Dispose();
-            base.OnFormClosing(e);
-        }
-
-        protected override void OnResize(EventArgs e)
-        {
-            base.OnResize(e);
-            if (WindowState == FormWindowState.Minimized && _chkMinimizeToTray.Checked)
-            {
-                Hide();
+                _config.LastTriggered = diskConfig.LastTriggered;
+                if (_config.LastTriggered.HasValue)
+                {
+                    _lastTriggerLabel.Text = $"Last event: Play/Pause sent at {_config.LastTriggered.Value:HH:mm:ss}";
+                    _lastTriggerLabel.ForeColor = Color.FromArgb(46, 160, 67);
+                }
             }
         }
 
-        private void RestoreFromTray()
+        private void EnsureServiceRunning()
         {
-            Show();
-            WindowState = FormWindowState.Normal;
-            BringToFront();
-            Activate();
+            var processes = Process.GetProcessesByName("PauseMediaService");
+            if (processes.Length == 0)
+            {
+                StartServiceProcess();
+            }
         }
 
-        private void ExitApplication()
+        private void StartServiceProcess()
         {
-            _hook.Dispose();
-            _notifyIcon.Visible = false;
-            Application.Exit();
-        }
-
-        private static string GetStartupShortcutPath()
-        {
-            var startupFolder = Environment.GetFolderPath(Environment.SpecialFolder.Startup);
-            return Path.Combine(startupFolder, "PauseMediaKey.lnk");
-        }
-
-        private static bool IsStartupShortcutEnabled()
-        {
-            return File.Exists(GetStartupShortcutPath());
-        }
-
-        private static void SetStartupShortcut(bool enable)
-        {
-            var shortcutPath = GetStartupShortcutPath();
             try
             {
-                if (enable)
+                string servicePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "PauseMediaService.exe");
+                if (File.Exists(servicePath))
                 {
-                    var shellType = Type.GetTypeFromProgID("WScript.Shell");
-                    if (shellType != null)
+                    Process.Start(new ProcessStartInfo
                     {
-                        dynamic? shell = Activator.CreateInstance(shellType);
-                        if (shell != null)
-                        {
-                            var shortcut = shell.CreateShortcut(shortcutPath);
-                            shortcut.TargetPath = Application.ExecutablePath;
-                            shortcut.WorkingDirectory = AppDomain.CurrentDomain.BaseDirectory;
-                            shortcut.Description = "PauseMediaKey Background Utility";
-                            shortcut.Save();
-                        }
-                    }
-                }
-                else
-                {
-                    if (File.Exists(shortcutPath))
-                    {
-                        File.Delete(shortcutPath);
-                    }
+                        FileName = servicePath,
+                        UseShellExecute = true,
+                        CreateNoWindow = true
+                    });
                 }
             }
             catch
             {
-                // Ignore permissions or environment issues
+                // Ignore launch error
             }
         }
-    }
 
-    internal sealed class DarkMenuRenderer : ToolStripProfessionalRenderer
-    {
-        public DarkMenuRenderer() : base(new DarkColorTable()) { }
-
-        protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e)
+        private void RestartService()
         {
-            e.TextColor = Color.FromArgb(235, 238, 242);
-            base.OnRenderItemText(e);
+            foreach (var p in Process.GetProcessesByName("PauseMediaService"))
+            {
+                try { p.Kill(); } catch { }
+            }
+            System.Threading.Thread.Sleep(300);
+            StartServiceProcess();
+            PollServiceStatus();
         }
-    }
 
-    internal sealed class DarkColorTable : ProfessionalColorTable
-    {
-        public override Color ToolStripDropDownBackground => Color.FromArgb(34, 37, 41);
-        public override Color MenuBorder => Color.FromArgb(48, 52, 58);
-        public override Color MenuItemBorder => Color.Transparent;
-        public override Color MenuItemSelected => Color.FromArgb(48, 52, 58);
-        public override Color MenuItemSelectedGradientBegin => Color.FromArgb(48, 52, 58);
-        public override Color MenuItemSelectedGradientEnd => Color.FromArgb(48, 52, 58);
-        public override Color SeparatorDark => Color.FromArgb(48, 52, 58);
-        public override Color SeparatorLight => Color.Transparent;
-        public override Color ImageMarginGradientBegin => Color.FromArgb(34, 37, 41);
-        public override Color ImageMarginGradientMiddle => Color.FromArgb(34, 37, 41);
-        public override Color ImageMarginGradientEnd => Color.FromArgb(34, 37, 41);
+        protected override void OnFormClosing(FormClosingEventArgs e)
+        {
+            _pollTimer.Stop();
+            _pollTimer.Dispose();
+            // Note: Background service PauseMediaService remains running independently!
+            base.OnFormClosing(e);
+        }
     }
 }

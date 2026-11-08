@@ -1,73 +1,81 @@
 # PauseMediaKey
 
-A minimalist, elegant dark-mode Windows desktop utility that seamlessly remaps the physical `Pause / Break` (`Pause / Interr`) key into a global Windows Media `Play / Pause` control.
+A minimalist, elegant dark-mode Windows utility designed with a decoupled architecture: an independent silent background worker service (`PauseMediaService.exe`) and a companion desktop management controller (`PauseMediaKey.exe`).
 
-Designed with a clean, low-profile office slate gray aesthetic, low memory footprint, and deep system tray integration.
+It seamlessly remaps the physical `Pause / Break` (`Pause / Interr`) key into a global Windows Media `Play / Pause` control for **Opera GX**, **Spotify**, **Chrome**, **YouTube**, and all Windows media players.
 
 ---
 
-## Why PauseMediaKey?
+## Architecture
 
-On standard PC keyboards, the `Pause / Break` key is rarely used in modern workflows. However, remapping it natively via the Windows Registry (`Scancode Map`) is notoriously impossible because the Pause key sends a legacy multi-byte `E1 1D 45 ...` scancode sequence that the registry parser rejects.
+The project is split into two independent components:
 
-`PauseMediaKey` solves this cleanly by installing an un-intrusive Windows low-level keyboard hook (`WH_KEYBOARD_LL`). When active:
-- Pressing `Pause / Break` (or `Ctrl + Break`) intercepts the signal and emits a native `VK_MEDIA_PLAY_PAUSE` keystroke directly to the Windows System Media Transport Controls (SMTC).
-- The original key event is swallowed so no default OS interruption occurs.
-- Any active media playback—such as **Opera GX**, **Spotify**, **Chrome**, **YouTube**, or **Windows Media Player**—toggles Play/Pause instantly.
+```
+[Windows Startup]
+        │
+        ▼
+[PauseMediaService.exe] ── (Silent Background Worker, no UI, ~12 MB RAM)
+        │                  Installs WH_KEYBOARD_LL hook & fires Play/Pause
+        │
+        ▲ (IPC via EventWaitHandle & JSON Config)
+        │
+[PauseMediaKey.exe] ───── (Dark Minimal Dashboard / Form Controller)
+                           Open anytime to toggle or configure;
+                           closing the window leaves the service running!
+```
+
+1. **`PauseMediaService.exe`**:
+   - Runs headlessly in the background with 0% CPU and zero UI.
+   - Automatically starts with Windows (`HKCU\...\Run`).
+   - Handles the low-level keyboard hook (`WH_KEYBOARD_LL`).
+   - Keeps remapping active even if the GUI window is never opened or is closed.
+
+2. **`PauseMediaKey.exe`**:
+   - Minimalist office slate dark UI (`#18191C` / `#222529`).
+   - Windows 11 immersive dark title bar support.
+   - Shows live service status, process PID, and last-triggered timestamp.
+   - Provides a one-click toggle to enable or disable the remap in real time.
+   - Closing the window (`X`) does not interrupt the service.
 
 ---
 
 ## Features
 
-- **Minimalist Office Dark Theme**: Styled with refined dark charcoal and slate gray tones, high-contrast readable typography, and Windows 11 immersive dark title bar support.
-- **One-Click Toggle**: Enable or disable the remap instantly with visual state confirmation.
-- **System Tray Integration**:
-  - Closes / minimizes to the notification area to keep your taskbar uncluttered.
-  - Double-click to restore or right-click for quick toggle and exit actions.
-  - Dynamic tray icon reflecting the active/inactive state.
-- **Autostart Support**: Built-in option to launch minimized with Windows automatically.
-- **Single Instance**: Ensures only one instance runs at any time, bringing the existing window forward if reopened.
-- **Zero Overhead**: Consumes minimal system resources (< 15 MB RAM) with 0% idle CPU usage.
+- **Decoupled Background Service**: The service keeps running independently in the background; you don't need to keep any window open or clutter the taskbar/tray.
+- **Instant Toggle**: Enable or disable remapping on the fly with 0 ms latency without restarting the service.
+- **Autostart with Windows**: The service automatically registers to run silently on boot.
+- **Low Overhead**: Extremely lightweight (< 15 MB RAM total) with no idle CPU usage.
+- **Opera GX & Browser Friendly**: Tested and compatible with Opera GX, Chrome, Spotify, YouTube, and Windows Media Transport Controls.
 
 ---
 
 ## Installation & Running
 
-### Option 1: Pre-built Binary
-1. Download the latest `v1.0.0.zip` from the [Releases](https://github.com/tiadiff/PauseMediaKey/releases) section.
-2. Extract the archive to any folder of your choice.
-3. Run `PauseMediaKey.exe`.
+### Pre-built Binary
+1. Download the latest `v1.0.0.zip` from [Releases](https://github.com/tiadiff/PauseMediaKey/releases).
+2. Extract the archive.
+3. Run `PauseMediaKey.exe` to open the control panel. The background service will launch automatically and configure autostart with Windows.
+4. Close the window whenever you like—remapping will continue in the background.
 
-*Note: Requires [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0).*
+*Requires [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0).*
 
-### Option 2: Build from Source
-Ensure [.NET 8 SDK](https://dotnet.microsoft.com/) is installed on your Windows machine:
-
+### Build from Source
 ```powershell
 git clone https://github.com/tiadiff/PauseMediaKey.git
 cd PauseMediaKey
 dotnet build -c Release
 ```
 
-The compiled binaries will be generated inside `bin/Release/net8.0-windows/`.
-
----
-
-## Usage
-
-1. Launch `PauseMediaKey.exe`.
-2. The application begins with remapping **Active** by default.
-3. Play music or a video in **Opera GX**, **Spotify**, or any media app.
-4. Press `Pause / Interr` on your keyboard: playback will toggle immediately.
-5. Click **Disable Remapping** to instantly restore the default Windows key behavior.
+All binaries will be placed in `bin/Release/net8.0-windows/`.
 
 ---
 
 ## Tech Stack
 
 - **Platform**: Windows 10 / Windows 11
-- **Framework**: .NET 8.0 (Windows Forms)
+- **Framework**: .NET 8.0 (Windows Forms, headless worker + GUI controller)
 - **APIs**: User32 `SetWindowsHookEx` (`WH_KEYBOARD_LL`), `keybd_event`, Dwmapi `DwmSetWindowAttribute`
+- **IPC**: Named `EventWaitHandle` + LocalAppData JSON configuration
 
 ---
 

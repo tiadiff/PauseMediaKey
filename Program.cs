@@ -8,7 +8,7 @@ namespace PauseMediaKey
 {
     internal static class Program
     {
-        private const string MutexName = "Local\\PauseMediaKey_Application_Mutex";
+        private const string MutexName = "Local\\PauseMediaKey_UI_Mutex";
 
         [DllImport("user32.dll")]
         [return: MarshalAs(UnmanagedType.Bool)]
@@ -25,7 +25,7 @@ namespace PauseMediaKey
             {
                 if (!createdNew)
                 {
-                    // Bring existing instance to front
+                    // Bring existing Form to front
                     var current = Process.GetCurrentProcess();
                     foreach (var process in Process.GetProcessesByName(current.ProcessName))
                     {

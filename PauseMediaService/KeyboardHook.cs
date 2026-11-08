@@ -23,10 +23,21 @@ namespace PauseMediaKey
 
         private readonly LowLevelKeyboardProc _proc;
         private IntPtr _hookId = IntPtr.Zero;
+        private volatile bool _isEnabled = true;
         private long _lastTick = 0;
         private bool _disposed = false;
 
-        public bool IsActive => _hookId != IntPtr.Zero;
+        public bool IsEnabled
+        {
+            get => _isEnabled;
+            set
+            {
+                _isEnabled = value;
+                StatusChanged?.Invoke(_isEnabled);
+            }
+        }
+
+        public bool IsHookInstalled => _hookId != IntPtr.Zero;
 
         public event Action? MediaKeyTriggered;
         public event Action<bool>? StatusChanged;
@@ -50,51 +61,26 @@ namespace PauseMediaKey
         [DllImport("user32.dll")]
         private static extern short GetKeyState(int nVirtKey);
 
-        public KeyboardHook()
+        public KeyboardHook(bool initialEnabled = true)
         {
+            _isEnabled = initialEnabled;
             _proc = HookCallback;
+            InstallHook();
         }
 
-        public bool Start()
+        private void InstallHook()
         {
-            if (IsActive) return true;
+            if (_hookId != IntPtr.Zero) return;
 
-            using (var curProcess = Process.GetCurrentProcess())
-            using (var curModule = curProcess.MainModule)
-            {
-                IntPtr hMod = curModule != null ? GetModuleHandle(curModule.ModuleName) : IntPtr.Zero;
-                _hookId = SetWindowsHookEx(WH_KEYBOARD_LL, _proc, hMod, 0);
-            }
-
-            bool success = IsActive;
-            StatusChanged?.Invoke(success);
-            return success;
-        }
-
-        public void Stop()
-        {
-            if (!IsActive) return;
-
-            UnhookWindowsHookEx(_hookId);
-            _hookId = IntPtr.Zero;
-            StatusChanged?.Invoke(false);
-        }
-
-        public void Toggle()
-        {
-            if (IsActive)
-            {
-                Stop();
-            }
-            else
-            {
-                Start();
-            }
+            using var curProcess = Process.GetCurrentProcess();
+            using var curModule = curProcess.MainModule;
+            IntPtr hMod = curModule != null ? GetModuleHandle(curModule.ModuleName) : IntPtr.Zero;
+            _hookId = SetWindowsHookEx(WH_KEYBOARD_LL, _proc, hMod, 0);
         }
 
         private IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
         {
-            if (nCode >= 0)
+            if (nCode >= 0 && _isEnabled)
             {
                 int msg = wParam.ToInt32();
                 int vkCode = Marshal.ReadInt32(lParam);
@@ -111,7 +97,7 @@ namespace PauseMediaKey
                         {
                             _lastTick = now;
 
-                            // Send media play/pause key event
+                            // Send media play/pause key
                             keybd_event(VK_MEDIA_PLAY_PAUSE, 0, KEYEVENTF_EXTENDEDKEY, UIntPtr.Zero);
                             keybd_event(VK_MEDIA_PLAY_PAUSE, 0, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP, UIntPtr.Zero);
 
@@ -119,7 +105,7 @@ namespace PauseMediaKey
                         }
                     }
 
-                    // Block the default Windows Pause/Break handling
+                    // Swallow the Pause key so default OS action is blocked
                     return (IntPtr)1;
                 }
             }
@@ -131,9 +117,15 @@ namespace PauseMediaKey
         {
             if (!_disposed)
             {
-                Stop();
+                _isEnabled = false;
+                if (_hookId != IntPtr.Zero)
+                {
+                    UnhookWindowsHookEx(_hookId);
+                    _hookId = IntPtr.Zero;
+                }
                 _disposed = true;
             }
         }
     }
 }
+
