@@ -1,0 +1,25 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    
+    <!-- Assembly Metadata -->
+    <AssemblyTitle>PauseMediaKey</AssemblyTitle>
+    <Product>PauseMediaKey</Product>
+    <Description>Minimalist dark-themed Windows utility to remap the Pause/Break key into a global Media Play/Pause control for Opera GX, Spotify, YouTube and Windows audio.</Description>
+    <Company>tiadiff</Company>
+    <Copyright>Copyright © 2026 tiadiff</Copyright>
+    <Version>1.0.0</Version>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+    
+    <!-- Publishing & Release Settings -->
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+  </PropertyGroup>
+
+</Project>
